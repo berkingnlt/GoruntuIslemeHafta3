@@ -1,110 +1,209 @@
 ﻿#include <opencv2/opencv.hpp>
+#include <opencv2/core/utils/filesystem.hpp>
 #include <iostream>
 #include <algorithm>
+#include <string>
 
-int main()
+// 25 elemani kucukten buyuge elle sirala
+void sirala(int degerler[], int adet)
 {
-    // 1. Gurultulu goruntuyu gri tonlamali ac
-    cv::Mat orijinal =
-        cv::imread("yol.jpeg", cv::IMREAD_GRAYSCALE);
-
-    if (orijinal.empty())
+    // Ekleme siralamasi (insertion sort)
+    for (int i = 1; i < adet; i++)
     {
-        std::cerr << "yol.jpeg acilamadi.\n";
-        return 1;
-    }
+        int mevcut = degerler[i];
+        int j = i - 1;
 
-    // Negatif gurultu degerlerini korumak icin 16 bit kullan
-    cv::Mat orijinal16;
-    orijinal.convertTo(orijinal16, CV_16SC1);
-
-    // Ortalama 0, standart sapma 25 olan Gauss gurultusu
-    cv::Mat gurultu(orijinal.size(), CV_16SC1);
-    cv::randn(gurultu, 0, 25);
-
-    cv::Mat gurultulu16 = orijinal16 + gurultu;
-
-    // Degerleri 0-255 araligina sinirlayarak 8 bite donustur
-    cv::Mat goruntu;
-    gurultulu16.convertTo(goruntu, CV_8UC1);
-
-    if (!cv::imwrite("gurultulu.png", goruntu))
-    {
-        std::cerr << "Gurultulu resim kaydedilemedi.\n";
-        return 1;
-    }
-
-    if (goruntu.empty())
-    {
-        std::cerr << "gurultulu.jpeg acilamadi.\n";
-        return 1;
-    }
-
-    // 2. 3x3 ortalama filtresi
-    const double cekirdek[3][3] =
-    {
-        {1.0 / 9, 1.0 / 9, 1.0 / 9},
-        {1.0 / 9, 1.0 / 9, 1.0 / 9},
-        {1.0 / 9, 1.0 / 9, 1.0 / 9}
-    };
-
-    // Sonucu ayri goruntude tut.
-    // Hesaplamalarda daima orijinal pikselleri kullan.
-    cv::Mat sonuc(goruntu.size(), CV_8UC1);
-
-    // 3. Filtreyi tum goruntu uzerinde gezdir
-    for (int y = 0; y < goruntu.rows; y++)
-    {
-        for (int x = 0; x < goruntu.cols; x++)
+        while (j >= 0 && degerler[j] > mevcut)
         {
-            double toplam = 0.0;
+            degerler[j + 1] = degerler[j];
+            j--;
+        }
 
-            // Her pikselin 3x3 komsulugunu ziyaret et
-            for (int dy = -1; dy <= 1; dy++)
+        degerler[j + 1] = mevcut;
+    }
+}
+
+// Hazir medyan filtre kullanmadan 5x5 filtre uygula
+cv::Mat manuelMedyan5x5(const cv::Mat& kaynak)
+{
+    CV_Assert(!kaynak.empty());
+    CV_Assert(kaynak.type() == CV_8UC1);
+
+    cv::Mat sonuc(kaynak.size(), CV_8UC1);
+
+    for (int y = 0; y < kaynak.rows; y++)
+    {
+        for (int x = 0; x < kaynak.cols; x++)
+        {
+            int degerler[25];
+            int indeks = 0;
+
+            // 5x5 komsuluktaki 25 pikseli topla
+            for (int dy = -2; dy <= 2; dy++)
             {
-                for (int dx = -1; dx <= 1; dx++)
+                for (int dx = -2; dx <= 2; dx++)
                 {
                     int komsuY = y + dy;
                     int komsuX = x + dx;
 
-                    // Sinir disinda en yakin kenar pikselini kullan
+                    // Sinirlarda en yakin kenar pikselini kullan
                     komsuY = std::max(
-                        0, std::min(komsuY, goruntu.rows - 1)
+                        0, std::min(komsuY, kaynak.rows - 1)
                     );
 
                     komsuX = std::max(
-                        0, std::min(komsuX, goruntu.cols - 1)
+                        0, std::min(komsuX, kaynak.cols - 1)
                     );
 
-                    unsigned char piksel =
-                        goruntu.at<unsigned char>(komsuY, komsuX);
+                    degerler[indeks] =
+                        kaynak.at<unsigned char>(komsuY, komsuX);
 
-                    // Konvolusyon: cekirdegi ters indeksle
-                    toplam += piksel * cekirdek[1 - dy][1 - dx];
+                    indeks++;
                 }
             }
 
-            // Ortalamayi yuvarlayip sonuc pikseline yaz
+            sirala(degerler, 25);
+
+            // Dizide indeksler 0'dan baslar:
+            // 13. elemanin indeksi 12'dir.
             sonuc.at<unsigned char>(y, x) =
-                static_cast<unsigned char>(toplam + 0.5);
+                static_cast<unsigned char>(degerler[12]);
         }
     }
 
-    // 4. Sonucu kaydet
-    if (!cv::imwrite("ortalama_3x3.png", sonuc))
+    return sonuc;
+}
+
+int main()
+{
+    cv::Mat goruntu;
+
+    // Salt-and-Pepper goruntusu varsa onu kullan
+    cv::String gurultuluYol = "salt_pepper.png";
+
+    if (cv::utils::fs::exists(gurultuluYol))
     {
-        std::cerr << "Sonuc kaydedilemedi.\n";
+        goruntu = cv::imread(
+            gurultuluYol,
+            cv::IMREAD_GRAYSCALE
+        );
+    }
+    else
+    {
+        // Yoksa yol.jpeg uzerinden test goruntusu olustur
+        cv::Mat orijinal =
+            cv::imread("yol.jpeg", cv::IMREAD_GRAYSCALE);
+
+        if (orijinal.empty())
+        {
+            std::cerr << "yol.jpeg acilamadi.\n";
+            return 1;
+        }
+
+        goruntu = orijinal.clone();
+
+        // Sabit tohum: her calistirmada ayni gurultu
+        cv::RNG rastgele(42);
+
+        for (int y = 0; y < goruntu.rows; y++)
+        {
+            for (int x = 0; x < goruntu.cols; x++)
+            {
+                int sans = rastgele.uniform(0, 100);
+
+                if (sans < 5)
+                {
+                    // %5 olasilikla siyah
+                    goruntu.at<unsigned char>(y, x) = 0;
+                }
+                else if (sans < 10)
+                {
+                    // %5 olasilikla beyaz
+                    goruntu.at<unsigned char>(y, x) = 255;
+                }
+            }
+        }
+
+        if (!cv::imwrite("salt_pepper.png", goruntu))
+        {
+            std::cerr << "Gurultulu resim kaydedilemedi.\n";
+            return 1;
+        }
+    }
+
+    if (goruntu.empty())
+    {
+        std::cerr << "Salt-and-Pepper goruntusu acilamadi.\n";
         return 1;
     }
 
-    std::cout << "Sonuc ortalama_3x3.png olarak kaydedildi.\n";
+    // 1. OpenCV'nin hazir 5x5 medyan filtresi
+    cv::Mat hazirSonuc;
+    cv::medianBlur(goruntu, hazirSonuc, 5);
 
-    // 5. Orijinal ve filtrelenmis goruntuyu goster
-    cv::namedWindow("Gurultulu Goruntu", cv::WINDOW_NORMAL);
-    cv::namedWindow("3x3 Ortalama Filtresi", cv::WINDOW_NORMAL);
+    // 2. Kendi yazdigimiz 5x5 medyan filtresi
+    cv::Mat manuelSonuc = manuelMedyan5x5(goruntu);
 
-    cv::imshow("Gurultulu Goruntu", goruntu);
-    cv::imshow("3x3 Ortalama Filtresi", sonuc);
+    // 3. Sonuclari piksel piksel karsilastir
+    cv::Mat fark(goruntu.size(), CV_8UC1);
+
+    long long farkliPiksel = 0;
+    int enBuyukFark = 0;
+
+    for (int y = 0; y < goruntu.rows; y++)
+    {
+        for (int x = 0; x < goruntu.cols; x++)
+        {
+            int hazir = hazirSonuc.at<unsigned char>(y, x);
+            int manuel = manuelSonuc.at<unsigned char>(y, x);
+
+            int pikselFarki = std::abs(hazir - manuel);
+
+            fark.at<unsigned char>(y, x) =
+                static_cast<unsigned char>(pikselFarki);
+
+            if (pikselFarki != 0)
+            {
+                farkliPiksel++;
+            }
+
+            enBuyukFark = std::max(enBuyukFark, pikselFarki);
+        }
+    }
+
+    std::cout << "Farkli piksel sayisi: "
+        << farkliPiksel << "\n";
+
+    std::cout << "En buyuk piksel farki: "
+        << enBuyukFark << "\n";
+
+    // 4. Ciktilari kaydet
+    bool kayit1 = cv::imwrite(
+        "medyan_opencv_5x5.png", hazirSonuc
+    );
+
+    bool kayit2 = cv::imwrite(
+        "medyan_manuel_5x5.png", manuelSonuc
+    );
+
+    bool kayit3 = cv::imwrite(
+        "medyan_fark.png", fark
+    );
+
+    if (!kayit1 || !kayit2 || !kayit3)
+    {
+        std::cerr << "Ciktilar kaydedilemedi.\n";
+        return 1;
+    }
+
+    // 5. Goruntuleri goster
+    cv::namedWindow("Salt-and-Pepper", cv::WINDOW_NORMAL);
+    cv::namedWindow("OpenCV Medyan 5x5", cv::WINDOW_NORMAL);
+    cv::namedWindow("Manuel Medyan 5x5", cv::WINDOW_NORMAL);
+
+    cv::imshow("Salt-and-Pepper", goruntu);
+    cv::imshow("OpenCV Medyan 5x5", hazirSonuc);
+    cv::imshow("Manuel Medyan 5x5", manuelSonuc);
 
     cv::waitKey(0);
     return 0;
